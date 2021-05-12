@@ -1,0 +1,56 @@
+1.MySQL:
+command: mysql -h sqoopdb.slbdh.cloudlabs.com -u avdhootpatil2016gmail -p 
+password:avdhootpatil2016gmailhbeyt 
+
+create table companiesdatas(Ticker_symbol varchar(200),Security varchar(200),Sector varchar(200),Sub_Industry varchar(200),Headquarter varchar(200));
+
+create table stockpricesdatas1(trading_date date,symbol varchar(200),open double,close double,low double,high double,volume int);
+
+2.Sqoop:
+
+//Export data into tables
+sqoop export --connect jdbc:mysql://sqoopdb.slbdh.cloudlabs.com/avdhootpatil2016gmail --username avdhootpatil2016gmail --password avdhootpatil2016gmailhbeyt --table stockpricesdatas1 --export-dir '/user/avdhootpatil2016gmail/StockPrices.csv' 
+
+sqoop export --connect jdbc:mysql://sqoopdb.slbdh.cloudlabs.com/avdhootpatil2016gmail --username avdhootpatil2016gmail --password avdhootpatil2016gmailhbeyt --table companiesdatas --export-dir '/user/avdhootpatil2016gmail/Stockcompanies.csv' 
+
+//Import table into hive using sqoop
+
+sqoop import --connect jdbc:mysql://sqoopdb.slbdh.cloudlabs.com/avdhootpatil2016gmail --username avdhootpatil2016gmail --password avdhootpatil2016gmailhbeyt --table stockpricesdatas1 -m1 --hive-import --create-hive-table --hive-table stockpricesdatas1;
+
+
+sqoop import --connect jdbc:mysql://sqoopdb.slbdh.cloudlabs.com/avdhootpatil2016gmail --username avdhootpatil2016gmail --password avdhootpatil2016gmailhbeyt --table companiesdatas -m1 --hive-import --create-hive-table --hive-table companiesdatas;
+
+
+3.Hive:
+create table Stockanalysisby as SELECT year(stockpricesdatas1.trading_date) as Trade_year,month(stockpricesdatas1.trading_date) as Trade_Month,companiesdatas.ticker_symbol as Symbol,companiesdatas.security as Company_Name,split(companiesdatas.headquarter,";")[1] as State,companiesdatas.sector as Sector,companiesdatas.sub_industry as Industry,stockpricesdatas1.open as Open,stockpricesdatas1.close as Close,stockpricesdatas1.low as Low,stockpricesdatas1.high as High,stockpricesdatas1.volume as Volume
+FROM companiesdatas
+INNER JOIN stockpricesdatas1
+ON companiesdatas.ticker_symbol=stockpricesdatas1.symbol;
+
+select max(trade_year),max(trade_month) from stockanalysisby;
+
+select min(trade_year),min(trade_month) from stockanalysisby;
+
+//Top Five Companies
+Select stock_start.company_name, (((close-open)/open)*100) pct_gain from (select company_name,min(open) as open from stockanalysisby where trade_year =2010  and trade_month = 1 GROUP BY company_name) stock_start,(select company_name,max(close) as close from stockanalysisby where trade_year = 2016 and trade_month = 12 GROUP BY company_name ) stock_end where stock_start.company_name=stock_end.company_name order by pct_gain desc limit 5;
+
+//Best-growing industry by each state
+create table companygrowths as Select state,industry,stock_start.company_name, (((close-open)/open)*100) pct_gain from (select company_name,min(open) as open from stockanalysisby where trade_year =2010  and trade_month = 1 GROUP BY company_name) stock_start,(select company_name,max(close) as close from stockanalysisby where trade_year = 2016 and trade_month = 12 GROUP BY company_name ) stock_end,(select company_name,state,industry from stockanalysisby group by company_name,state,industry) sd where (stock_end.close-stock_start.open) > 0 and stock_start.company_name = stock_end.company_name and sd.company_name = stock_start.company_name;
+
+Create table industrygrowths as select state,industry,avg(pct_gain) ind_growth from companygrowths group by state,industry;
+
+Select ig.state,industry,ind_growth from industrygrowths ig,(select state,max(ind_growth) max_growth from industrygrowths group by state having count(industry) >= 2)  inn_ig where inn_ig.state = ig.state and ig.ind_growth = inn_ig.max_growth;
+
+
+
+create table sector_year_growth as select open.sector,open.trade_year,(close-open) as pct_gain from (select sector,trade_year,avg(open) as open from stockanalysisby where trade_month=1 group by sector,trade_year) open,(select sector,trade_year,avg(close) as close from stockanalysisby where trade_month=12 group by sector,trade_year) close where open.sector=close.sector and open.trade_year=close.trade_year;
+
+//Worst Year
+select x.sector,x.trade_year,x.pct_gain from sector_year_growth x,(select sector,min(pct_gain) growth from sector_year_growth group by sector) y where x.sector=y.sector and x.pct_gain=y.growth;
+
+//Best Year
+select x.sector,x.trade_year,x.pct_gain from sector_year_growth x,(select sector,max(pct_gain) growth from sector_year_growth group by sector) y where x.sector=y.sector and x.pct_gain=y.growth;
+
+//Statble year
+select x.sector,x.trade_year,x.pct_gain from sector_year_growth x,(select sector,avg(pct_gain) growth from sector_year_growth group by sector) y where x.sector=y.sector and x.pct_gain>=y.growth;
+
